@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = ["zip"]
+zip = ["flate2"]
 
 [dependencies]
 thiserror = "*"
+flate2 = { version = "*", optional = true }

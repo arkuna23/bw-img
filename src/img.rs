@@ -81,7 +81,7 @@ impl BWImage {
     }
 
     #[inline(always)]
-    pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<Self> {
+    pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<Option<Self>> {
         crate::file::parse_file(input)
     }
 

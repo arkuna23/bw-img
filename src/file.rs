@@ -3,10 +3,16 @@ use crate::{img::BWImageConfig, BWImage};
 const MAGIC_NUMBER: &[u8; 4] = b"BWIM";
 
 /// Parse the header of bw img file
-pub fn parse_header<R: std::io::Read>(read: &mut R) -> super::Result<BWImageConfig> {
+pub fn parse_header<R: std::io::Read>(read: &mut R) -> super::Result<Option<BWImageConfig>> {
     let mut header = [0u8; 16];
-    read.read_exact(&mut header)
-        .map_err(|e| super::BWError::FileHeader(e.to_string()))?;
+    if let Err(e) = read.read_exact(&mut header) {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            return Ok(None);
+        } else {
+            Err(e)?
+        }
+    }
+
     if &header[0..4] != MAGIC_NUMBER {
         return Err(super::BWError::FileHeader(
             "invalid magic number".to_string(),
@@ -17,10 +23,10 @@ pub fn parse_header<R: std::io::Read>(read: &mut R) -> super::Result<BWImageConf
             "invalid version number".to_string(),
         ));
     }
-    Ok(BWImageConfig {
+    Ok(Some(BWImageConfig {
         width: u32::from_le_bytes([header[8], header[9], header[10], header[11]]),
         height: u32::from_le_bytes([header[12], header[13], header[14], header[15]]),
-    })
+    }))
 }
 
 /// write the header of bw img file
@@ -41,12 +47,16 @@ pub fn write_header<W: std::io::Write>(
 }
 
 /// Parse the bw image from file
-pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<BWImage> {
-    let config = parse_header(input)?;
-    let size = ((config.width * config.height) as f64 / 8f64).ceil() as usize;
-    let mut data = vec![0u8; size];
-    input.read_exact(&mut data)?;
-    Ok(BWImage { config, data })
+pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<Option<BWImage>> {
+    Ok(match parse_header(input)? {
+        Some(config) => {
+            let size = ((config.width * config.height) as f64 / 8f64).ceil() as usize;
+            let mut data = vec![0u8; size];
+            input.read_exact(&mut data)?;
+            Some(BWImage { config, data })
+        }
+        _ => None,
+    })
 }
 
 /// Encode the bw image to file
@@ -55,4 +65,32 @@ pub fn encode_file<W: std::io::Write>(output: &mut W, img: &BWImage) -> super::R
     output.write_all(&img.data)?;
     output.flush()?;
     Ok(())
+}
+
+#[cfg(feature = "zip")]
+pub mod zip {
+    use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+
+    use crate::BWImage;
+
+    pub fn compress_imgs<W: std::io::Write>(
+        imgs: &[&BWImage],
+        output: &mut W,
+    ) -> crate::Result<()> {
+        let mut e = ZlibEncoder::new(output, Compression::best());
+        for img in imgs {
+            img.encode_as_file(&mut e)?;
+        }
+        e.flush_finish()?;
+        Ok(())
+    }
+
+    pub fn decompress_imgs<R: std::io::Read>(input: &mut R) -> crate::Result<Vec<BWImage>> {
+        let mut d = ZlibDecoder::new(input);
+        let mut imgs = Vec::new();
+        while let Some(img) = BWImage::parse_file(&mut d)? {
+            imgs.push(img);
+        }
+        Ok(imgs)
+    }
 }
