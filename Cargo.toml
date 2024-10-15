@@ -3,4 +3,8 @@ name = "bw-img"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+
 [dependencies]
+thiserror = "*"
+bytes = "*"

@@ -1,14 +1,15 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+pub mod img;
+pub mod file;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub use img::{BWImage, RgbImage};
+use thiserror::Error;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub type Result<T> = std::result::Result<T, BWError>;
+
+#[derive(Error, Debug)]
+pub enum BWError {
+    #[error("err parsing file header: {0}")]
+    FileHeader(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
