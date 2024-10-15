@@ -74,7 +74,7 @@ pub mod zip {
     use crate::BWImage;
 
     pub fn compress_imgs<W: std::io::Write>(
-        imgs: &[&BWImage],
+        imgs: &[BWImage],
         output: &mut W,
     ) -> crate::Result<()> {
         let mut e = ZlibEncoder::new(output, Compression::best());
