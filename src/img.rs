@@ -1,13 +1,13 @@
-use std::error::Error;
-
 pub use image::NormalImage;
 
+use crate::BWDataErr;
+
 pub trait ImageData {
-    fn to_bw_data(&self) -> Result<Vec<u8>, Box<dyn Error>>;
+    fn to_bw_data(&self) -> Result<Vec<u8>, BWDataErr>;
     fn image_config(&self) -> BWImageSize;
 
     #[inline(always)]
-    fn parse_bw_image(&self) -> Result<BWImage, Box<dyn Error>>
+    fn parse_bw_image(&self) -> Result<BWImage, BWDataErr>
     where
         Self: Sized,
     {
@@ -26,6 +26,8 @@ pub struct RgbData<'a> {
 #[cfg(feature = "img")]
 mod image {
     use image::GenericImageView;
+
+    use crate::BWDataErr;
 
     use super::{is_white, ImageData};
 
@@ -47,18 +49,18 @@ mod image {
     }
 
     impl<'a> ImageData for NormalImage<'a> {
-        fn to_bw_data(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        fn to_bw_data(&self) -> Result<Vec<u8>, BWDataErr> {
+            let width = self.img.width();
             let mut buf = vec![];
             let mut bytes = vec![];
-            for (_, _, pix) in self.img.pixels() {
+            for (x, _, pix) in self.img.pixels() {
                 buf.push(is_white(pix[0], pix[1], pix[2], self.threshold));
 
-                if buf.len() == 8 {
+                if x == width - 1 || buf.len() == 8 {
                     bytes.push(super::to_bw_data_byte(&buf));
                     buf.clear();
                 }
             }
-            bytes.push(super::to_bw_data_byte(&buf));
 
             Ok(bytes)
         }
@@ -105,7 +107,7 @@ fn to_bw_data_byte(data: &[bool]) -> u8 {
 }
 
 impl<'a> ImageData for RgbData<'a> {
-    fn to_bw_data(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn to_bw_data(&self) -> Result<Vec<u8>, BWDataErr> {
         Ok(self
             .data
             .chunks(3 * 8)
@@ -142,6 +144,13 @@ impl BWByteData for u8 {
 pub struct BWImageSize {
     pub width: u32,
     pub height: u32,
+}
+
+impl BWImageSize {
+    #[inline(always)]
+    pub fn get_padded_bytes_len(&self) -> u64 {
+        ((self.width as u64 + 7) / 8) * self.height as u64
+    }
 }
 
 /// Black and white image
@@ -245,7 +254,7 @@ impl<'a> Iterator for BWByteIter<'a> {
 }
 
 impl BWImage {
-    pub fn parse<T: ImageData>(data: &T) -> Result<Self, Box<dyn Error>> {
+    pub fn parse<T: ImageData>(data: &T) -> Result<Self, BWDataErr> {
         Ok(Self {
             size: data.image_config(),
             pixels: data.to_bw_data()?,
@@ -253,7 +262,7 @@ impl BWImage {
     }
 
     #[inline(always)]
-    pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<Option<Self>> {
+    pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<Option<(Self, u64)>> {
         crate::file::parse_file(input)
     }
 

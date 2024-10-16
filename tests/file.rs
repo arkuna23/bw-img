@@ -1,6 +1,13 @@
-use std::{fs, io::Cursor};
+use std::io::Cursor;
 
-use bw_img::{file::zip::{compress_imgs, decompress_imgs}, img::BWImageSize, BWImage, ImageData, NormalImage};
+use bw_img::{
+    file::zip::{compress_imgs, decompress_imgs},
+    img::BWImageSize,
+    BWImage, ImageData, NormalImage,
+};
+
+static RUST: &[u8] = include_bytes!("../assets/rust.png");
+static FERRIES: &[u8] = include_bytes!("../assets/ferries.png");
 
 #[test]
 fn encode_and_parse() {
@@ -16,7 +23,7 @@ fn encode_and_parse() {
     .unwrap();
 
     buffer.set_position(0);
-    let img = BWImage::parse_file(&mut buffer).unwrap().unwrap();
+    let (img, _) = BWImage::parse_file(&mut buffer).unwrap().unwrap();
     assert_eq!(
         img.size,
         BWImageSize {
@@ -30,14 +37,32 @@ fn encode_and_parse() {
 #[test]
 fn compress_and_decompress() {
     let imgs = [
-        NormalImage::new(&image::open("assets/ferries.png").unwrap())
+        NormalImage::new(&image::load_from_memory(FERRIES).unwrap())
             .parse_bw_image()
             .unwrap(),
-        NormalImage::new(&image::open("assets/rust.png").unwrap())
+        NormalImage::new(&image::load_from_memory(RUST).unwrap())
             .parse_bw_image()
             .unwrap(),
     ];
+    let mut buf = Vec::new();
+    println!(
+        "img height: {}, width {}",
+        imgs[0].size.height, imgs[0].size.width
+    );
+    println!(
+        "width after divided: {}",
+        imgs[0].pixels.len() * 8 / imgs[0].size.height as usize
+    );
+    assert_eq!(
+        imgs[0].size.get_padded_bytes_len(),
+        imgs[0].pixels.len() as u64
+    );
+    assert_eq!(
+        imgs[1].size.get_padded_bytes_len(),
+        imgs[1].pixels.len() as u64
+    );
 
-    compress_imgs(&imgs, &mut fs::File::create("/tmp/test").unwrap()).unwrap();
-    decompress_imgs(&mut fs::File::open("/tmp/test").unwrap()).unwrap();
+    compress_imgs(&imgs, &mut buf).unwrap();
+    let imgs = decompress_imgs(&mut Cursor::new(buf)).unwrap();
+    assert_eq!(imgs.len(), 2);
 }

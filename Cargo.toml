@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["gz", "img"]
-gz = ["flate2"]
+default = ["compress", "img"]
+compress = ["flate2"]
 img = ["image"]
 
 [dependencies]
 thiserror = "*"
-flate2 = { version = "*", optional = true }
+flate2 = { version = "*", default-features = false, features = ["zlib-ng"], optional = true }
 image = { version = "*", optional = true }
