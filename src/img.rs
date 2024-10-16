@@ -161,7 +161,7 @@ pub enum IterDirection {
 
 #[derive(Clone, Debug)]
 pub enum IterOutput {
-    Byte(u8),
+    Byte { byte: u8, len: usize },
     NewLine,
 }
 
@@ -209,7 +209,10 @@ impl<'a> Iterator for BWByteIter<'a> {
                 } else {
                     self.current = (x + 1, y);
 
-                    Some(IterOutput::Byte(self.pixels[(y * width + x) as usize]))
+                    Some(IterOutput::Byte {
+                        byte: self.pixels[(y * width + x) as usize],
+                        len: 8.min((width - x * 8) as usize),
+                    })
                 }
             }
             IterDirection::Vertical => {
@@ -223,16 +226,21 @@ impl<'a> Iterator for BWByteIter<'a> {
 
                     let mut byt = 0u8;
                     let from = x * width + y;
+                    let mut len = 8;
                     for i in 0..8 {
                         let pos = from + i * width;
                         if pos >= self.pixels.len() as u32 {
+                            len = i as usize;
                             break;
                         }
 
                         byt |= self.pixels[pos as usize] << (7 - i);
                     }
 
-                    Some(IterOutput::Byte(byt))
+                    Some(IterOutput::Byte{
+                        byte: byt,
+                        len,
+                    })
                 }
             }
         }
