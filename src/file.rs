@@ -69,7 +69,7 @@ pub fn encode_file<W: std::io::Write>(output: &mut W, img: &BWImage) -> super::R
 
 #[cfg(feature = "gz")]
 pub mod zip {
-    use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+    use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 
     use crate::BWImage;
 
@@ -77,7 +77,7 @@ pub mod zip {
         imgs: &[BWImage],
         output: &mut W,
     ) -> crate::Result<()> {
-        let mut e = ZlibEncoder::new(output, Compression::best());
+        let mut e = GzEncoder::new(output, Compression::best());
         for img in imgs {
             img.encode_as_file(&mut e)?;
         }
@@ -86,7 +86,7 @@ pub mod zip {
     }
 
     pub fn decompress_imgs<R: std::io::Read>(input: &mut R) -> crate::Result<Vec<BWImage>> {
-        let mut d = ZlibDecoder::new(input);
+        let mut d = GzDecoder::new(input);
         let mut imgs = Vec::new();
         while let Some(img) = BWImage::parse_file(&mut d)? {
             imgs.push(img);
