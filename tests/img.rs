@@ -9,8 +9,8 @@ fn img_rs_01() {
     let mut out = String::new();
     for ele in img.iterator(IterDirection::Horizontal) {
         match ele {
-            IterOutput::Byte(b) => {
-                for ele in b.bw_byte_iter(8) {
+            IterOutput::Byte { byte, len } => {
+                for ele in byte.bw_byte_iter(len) {
                     if ele {
                         out.push_str("██");
                     } else {
