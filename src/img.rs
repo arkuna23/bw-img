@@ -179,7 +179,7 @@ impl<'a> BWByteIter<'a> {
     pub fn new(direction: IterDirection, size: &BWImageSize, pixels: &'a [u8]) -> Self {
         let byte_size = match direction {
             IterDirection::Horizontal => BWImageSize {
-                width: (size.width + 7) / 8,
+                width: size.width,
                 height: size.height,
             },
             IterDirection::Vertical => size.clone(),
@@ -207,11 +207,11 @@ impl<'a> Iterator for BWByteIter<'a> {
                     self.current = (0, y + 1);
                     Some(IterOutput::NewLine)
                 } else {
-                    self.current = (x + 1, y);
+                    self.current = (x + 8, y);
 
                     Some(IterOutput::Byte {
-                        byte: self.pixels[(y * width + x) as usize],
-                        len: 8.min((width - x * 8) as usize),
+                        byte: self.pixels[((y * width + x) / 8) as usize],
+                        len: 8.min((width - x) as usize),
                     })
                 }
             }
@@ -237,10 +237,7 @@ impl<'a> Iterator for BWByteIter<'a> {
                         byt |= self.pixels[pos as usize] << (7 - i);
                     }
 
-                    Some(IterOutput::Byte{
-                        byte: byt,
-                        len,
-                    })
+                    Some(IterOutput::Byte { byte: byt, len })
                 }
             }
         }
