@@ -1,7 +1,7 @@
 pub mod img;
 pub mod file;
 
-pub use img::{BWImage, RgbImage};
+pub use img::*;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, BWError>;

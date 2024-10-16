@@ -1,9 +1,9 @@
-use crate::{img::BWImageConfig, BWImage};
+use crate::{img::BWImageSize, BWImage};
 
 const MAGIC_NUMBER: &[u8; 4] = b"BWIM";
 
 /// Parse the header of bw img file
-pub fn parse_header<R: std::io::Read>(read: &mut R) -> super::Result<Option<BWImageConfig>> {
+pub fn parse_header<R: std::io::Read>(read: &mut R) -> super::Result<Option<BWImageSize>> {
     let mut header = [0u8; 16];
     if let Err(e) = read.read_exact(&mut header) {
         if e.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -23,7 +23,7 @@ pub fn parse_header<R: std::io::Read>(read: &mut R) -> super::Result<Option<BWIm
             "invalid version number".to_string(),
         ));
     }
-    Ok(Some(BWImageConfig {
+    Ok(Some(BWImageSize {
         width: u32::from_le_bytes([header[8], header[9], header[10], header[11]]),
         height: u32::from_le_bytes([header[12], header[13], header[14], header[15]]),
     }))
@@ -37,7 +37,7 @@ pub fn parse_header<R: std::io::Read>(read: &mut R) -> super::Result<Option<BWIm
 /// 12-15: height, u32
 pub fn write_header<W: std::io::Write>(
     write: &mut W,
-    config: &BWImageConfig,
+    config: &BWImageSize,
 ) -> std::io::Result<()> {
     write.write_all(MAGIC_NUMBER)?;
     write.write_all(&1u32.to_le_bytes())?;
@@ -53,7 +53,7 @@ pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<Option<BWIma
             let size = ((config.width * config.height) as f64 / 8f64).ceil() as usize;
             let mut data = vec![0u8; size];
             input.read_exact(&mut data)?;
-            Some(BWImage { config, data })
+            Some(BWImage { size: config, pixels: data })
         }
         _ => None,
     })
@@ -61,13 +61,13 @@ pub fn parse_file<R: std::io::Read>(input: &mut R) -> super::Result<Option<BWIma
 
 /// Encode the bw image to file
 pub fn encode_file<W: std::io::Write>(output: &mut W, img: &BWImage) -> super::Result<()> {
-    write_header(output, &img.config)?;
-    output.write_all(&img.data)?;
+    write_header(output, &img.size)?;
+    output.write_all(&img.pixels)?;
     output.flush()?;
     Ok(())
 }
 
-#[cfg(feature = "zip")]
+#[cfg(feature = "gz")]
 pub mod zip {
     use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 
@@ -81,7 +81,7 @@ pub mod zip {
         for img in imgs {
             img.encode_as_file(&mut e)?;
         }
-        e.flush_finish()?;
+        e.finish()?;
         Ok(())
     }
 

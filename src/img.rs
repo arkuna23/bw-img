@@ -1,19 +1,78 @@
 use std::error::Error;
 
+pub use image::NormalImage;
+
 pub trait ImageData {
     fn to_bw_data(&self) -> Result<Vec<u8>, Box<dyn Error>>;
-    fn image_config(&self) -> BWImageConfig;
+    fn image_config(&self) -> BWImageSize;
+
+    #[inline(always)]
+    fn parse_bw_image(&self) -> Result<BWImage, Box<dyn Error>>
+    where
+        Self: Sized,
+    {
+        BWImage::parse(self)
+    }
 }
 
 #[derive(Clone)]
-pub struct RgbImage<'a> {
+pub struct RgbData<'a> {
     data: &'a [u8],
     height: u32,
     width: u32,
     bw_threshold: u8,
 }
 
-impl<'a> RgbImage<'a> {
+#[cfg(feature = "img")]
+mod image {
+    use image::GenericImageView;
+
+    use super::{is_white, ImageData};
+
+    pub struct NormalImage<'a> {
+        img: &'a image::DynamicImage,
+        threshold: u8,
+    }
+    impl<'a> NormalImage<'a> {
+        pub fn new(img: &'a image::DynamicImage) -> Self {
+            Self {
+                img,
+                threshold: 128,
+            }
+        }
+
+        pub fn set_bw_threshold(&mut self, threshold: u8) {
+            self.threshold = threshold
+        }
+    }
+
+    impl<'a> ImageData for NormalImage<'a> {
+        fn to_bw_data(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let mut buf = vec![];
+            let mut bytes = vec![];
+            for (_, _, pix) in self.img.pixels() {
+                buf.push(is_white(pix[0], pix[1], pix[2], self.threshold));
+
+                if buf.len() == 8 {
+                    bytes.push(super::to_bw_data_byte(&buf));
+                    buf.clear();
+                }
+            }
+            bytes.push(super::to_bw_data_byte(&buf));
+
+            Ok(bytes)
+        }
+
+        fn image_config(&self) -> super::BWImageSize {
+            super::BWImageSize {
+                width: self.img.width(),
+                height: self.img.height(),
+            }
+        }
+    }
+}
+
+impl<'a> RgbData<'a> {
     pub fn new(data: &'a [u8], width: u32, height: u32) -> Self {
         Self {
             data,
@@ -28,37 +87,59 @@ impl<'a> RgbImage<'a> {
     }
 }
 
-impl<'a> ImageData for RgbImage<'a> {
+#[inline(always)]
+fn is_white(r: u8, g: u8, b: u8, threshold: u8) -> bool {
+    let gray_value = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) as u8;
+    gray_value > threshold
+}
+
+fn to_bw_data_byte(data: &[bool]) -> u8 {
+    // 8 bits per byte, one bit presents one pixel, high bit is the first pixel
+    let mut bw_bit = 0u8;
+    for (i, bit) in data.iter().enumerate() {
+        if *bit {
+            bw_bit |= 1 << (7 - i);
+        }
+    }
+    bw_bit
+}
+
+impl<'a> ImageData for RgbData<'a> {
     fn to_bw_data(&self) -> Result<Vec<u8>, Box<dyn Error>> {
         Ok(self
             .data
             .chunks(3 * 8)
             .map(|c| {
-                // 8 bits per byte, one bit presents one pixel, high bit is the first pixel
-                let mut bw_bit = 0u8;
-                for (i, bit) in c.chunks(3).enumerate() {
-                    let gray_value = (0.299 * bit[0] as f32
-                        + 0.587 * bit[1] as f32
-                        + 0.114 * bit[2] as f32) as u8;
-                    if gray_value > self.bw_threshold {
-                        bw_bit |= 1 << (7 - i);
-                    }
-                }
-                bw_bit
+                to_bw_data_byte(
+                    &c.chunks(3)
+                        .map(|pix| is_white(pix[0], pix[1], pix[2], self.bw_threshold))
+                        .collect::<Vec<_>>(),
+                )
             })
             .collect())
     }
 
-    fn image_config(&self) -> BWImageConfig {
-        BWImageConfig {
+    fn image_config(&self) -> BWImageSize {
+        BWImageSize {
             width: self.width,
             height: self.height,
         }
     }
 }
 
+pub trait BWByteData {
+    /// Get the iterator of the black and white data with specified len.(8 pixels per byte)
+    fn bw_byte_iter(&self, len: usize) -> impl Iterator<Item = bool>;
+}
+
+impl BWByteData for u8 {
+    fn bw_byte_iter(&self, len: usize) -> impl Iterator<Item = bool> {
+        (0..len).map(move |i| self & (1 << (7 - i)) != 0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BWImageConfig {
+pub struct BWImageSize {
     pub width: u32,
     pub height: u32,
 }
@@ -68,15 +149,101 @@ pub struct BWImageConfig {
 /// The high bit is the first pixel
 #[derive(Clone, Debug)]
 pub struct BWImage {
-    pub config: BWImageConfig,
-    pub data: Vec<u8>,
+    pub size: BWImageSize,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum IterDirection {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Debug)]
+pub enum IterOutput {
+    Byte(u8),
+    NewLine,
+}
+
+/// Iterator for black and white image
+/// The iterator will iterate through the image in a specified direction
+/// The iterator will return the position of the pixel and the value of the pixel(8 pixels per byte)
+pub struct BWByteIter<'a> {
+    direction: IterDirection,
+    byte_size: BWImageSize,
+    current: (u32, u32),
+    pixels: &'a [u8],
+}
+
+impl<'a> BWByteIter<'a> {
+    pub fn new(direction: IterDirection, size: &BWImageSize, pixels: &'a [u8]) -> Self {
+        let byte_size = match direction {
+            IterDirection::Horizontal => BWImageSize {
+                width: (size.width + 7) / 8,
+                height: size.height,
+            },
+            IterDirection::Vertical => size.clone(),
+        };
+        Self {
+            direction,
+            byte_size,
+            current: (0, 0),
+            pixels,
+        }
+    }
+}
+
+impl<'a> Iterator for BWByteIter<'a> {
+    type Item = IterOutput;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (x, y) = self.current;
+        let BWImageSize { width, height } = self.byte_size.clone();
+        match self.direction {
+            IterDirection::Horizontal => {
+                if y >= height {
+                    None
+                } else if x >= width {
+                    self.current = (0, y + 1);
+                    Some(IterOutput::NewLine)
+                } else {
+                    self.current = (x + 1, y);
+
+                    Some(IterOutput::Byte(self.pixels[(y * width + x) as usize]))
+                }
+            }
+            IterDirection::Vertical => {
+                if x >= width {
+                    None
+                } else if y + 8 >= height {
+                    self.current = (x + 1, 0);
+                    Some(IterOutput::NewLine)
+                } else {
+                    self.current = (x, y + 8);
+
+                    let mut byt = 0u8;
+                    let from = x * width + y;
+                    for i in 0..8 {
+                        let pos = from + i * width;
+                        if pos >= self.pixels.len() as u32 {
+                            break;
+                        }
+
+                        byt |= self.pixels[pos as usize] << (7 - i);
+                    }
+
+                    Some(IterOutput::Byte(byt))
+                }
+            }
+        }
+    }
 }
 
 impl BWImage {
-    pub fn parse(data: impl ImageData) -> Result<Self, Box<dyn Error>> {
+    pub fn parse<T: ImageData>(data: &T) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            config: data.image_config(),
-            data: data.to_bw_data()?,
+            size: data.image_config(),
+            pixels: data.to_bw_data()?,
         })
     }
 
@@ -88,5 +255,9 @@ impl BWImage {
     #[inline(always)]
     pub fn encode_as_file<W: std::io::Write>(&self, out: &mut W) -> super::Result<()> {
         crate::file::encode_file(out, self)
+    }
+
+    pub fn iterator(&self, direction: IterDirection) -> BWByteIter {
+        BWByteIter::new(direction, &self.size, &self.pixels)
     }
 }
