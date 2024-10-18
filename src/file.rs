@@ -68,11 +68,47 @@ pub fn encode_file<W: std::io::Write>(output: &mut W, img: &BWImage) -> super::R
 
 #[cfg(feature = "compress")]
 pub mod zip {
+    use std::io::Read;
+
     use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 
     use crate::{BWError, BWImage};
 
-    pub fn compress_imgs<W: std::io::Write>(imgs: &[BWImage], output: &mut W) -> crate::Result<()> {
+    pub struct DecompressIter<R: Read> {
+        d: ZlibDecoder<R>,
+        count: u32,
+        position: u64,
+    }
+
+    impl<R: Read> Iterator for DecompressIter<R> {
+        type Item = crate::Result<BWImage>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match BWImage::parse_file(&mut self.d)
+                .map_err(|e| BWError::Compression(self.count as usize, Box::new(e), self.position))
+            {
+                Ok(Some((img, size))) => {
+                    self.count += 1;
+                    self.position += size;
+                    Some(Ok(img))
+                }
+                Ok(None) => None,
+                Err(e) => Some(Err(e)),
+            }
+        }
+    }
+
+    impl<R: Read> DecompressIter<R> {
+        pub fn new(read: R) -> Self {
+            Self {
+                d: ZlibDecoder::new(read),
+                count: 0,
+                position: 0,
+            }
+        }
+    }
+
+    pub fn compress_imgs<W: std::io::Write>(imgs: &[BWImage], output: W) -> crate::Result<()> {
         let mut e = ZlibEncoder::new(output, Compression::best());
         for img in imgs {
             img.encode_as_file(&mut e)?;
@@ -81,18 +117,7 @@ pub mod zip {
         Ok(())
     }
 
-    pub fn decompress_imgs<R: std::io::Read>(input: &mut R) -> crate::Result<Vec<BWImage>> {
-        let mut d = ZlibDecoder::new(input);
-        let mut imgs = Vec::new();
-        let mut count = 0;
-        let mut position = 0;
-        while let Some((img, size)) = BWImage::parse_file(&mut d)
-            .map_err(|e| BWError::Compression(count, Box::new(e), position))?
-        {
-            imgs.push(img);
-            count += 1;
-            position += size;
-        }
-        Ok(imgs)
+    pub fn decompress_imgs<R: Read>(input: R) -> DecompressIter<R> {
+        DecompressIter::new(input)
     }
 }

@@ -63,6 +63,8 @@ fn compress_and_decompress() {
     );
 
     compress_imgs(&imgs, &mut buf).unwrap();
-    let imgs = decompress_imgs(&mut Cursor::new(buf)).unwrap();
+    let imgs = decompress_imgs(&mut Cursor::new(buf))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(imgs.len(), 2);
 }

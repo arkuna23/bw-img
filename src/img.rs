@@ -140,7 +140,7 @@ impl BWByteData for u8 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BWImageSize {
     pub width: u32,
     pub height: u32,
@@ -162,10 +162,11 @@ pub struct BWImage {
     pub pixels: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum IterDirection {
-    Horizontal,
-    Vertical,
+#[derive(Clone)]
+pub struct BWIterState<'a> {
+    pub size: BWImageSize,
+    pub current: (u32, u32),
+    pub pixels: &'a [u8],
 }
 
 #[derive(Clone, Debug)]
@@ -174,81 +175,110 @@ pub enum IterOutput {
     NewLine,
 }
 
-/// Iterator for black and white image
-/// The iterator will iterate through the image in a specified direction
-/// The iterator will return the position of the pixel and the value of the pixel(8 pixels per byte)
-pub struct BWByteIter<'a> {
-    direction: IterDirection,
-    byte_size: BWImageSize,
-    current: (u32, u32),
-    pixels: &'a [u8],
+pub trait IterDirection {
+    /// Get the position after this iteration, and the byte of pixels or other result in this iteration
+    fn next(&mut self, state: BWIterState) -> Option<((u32, u32), IterOutput)>;
 }
 
-impl<'a> BWByteIter<'a> {
-    pub fn new(direction: IterDirection, size: &BWImageSize, pixels: &'a [u8]) -> Self {
-        let byte_size = match direction {
-            IterDirection::Horizontal => BWImageSize {
-                width: size.width,
-                height: size.height,
-            },
-            IterDirection::Vertical => size.clone(),
-        };
-        Self {
-            direction,
-            byte_size,
-            current: (0, 0),
-            pixels,
-        }
-    }
-}
-
-impl<'a> Iterator for BWByteIter<'a> {
+impl<D: IterDirection> Iterator for BWByteIter<'_, D> {
     type Item = IterOutput;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (x, y) = self.current;
-        let BWImageSize { width, height } = self.byte_size.clone();
-        match self.direction {
-            IterDirection::Horizontal => {
-                if y >= height {
-                    None
-                } else if x >= width {
-                    self.current = (0, y + 1);
-                    Some(IterOutput::NewLine)
-                } else {
-                    self.current = (x + 8, y);
+        self.direction
+            .next(BWIterState {
+                size: self.size,
+                current: self.current,
+                pixels: self.pixels,
+            })
+            .map(|(current, out)| {
+                self.current = current;
+                out
+            })
+    }
+}
 
-                    Some(IterOutput::Byte {
-                        byte: self.pixels[((y * width + x) / 8) as usize],
+#[macro_export]
+macro_rules! define_direction {
+    ($type:ident, $impl_bo:tt) => {
+        pub struct $type;
+
+        impl $crate::img::IterDirection for $type $impl_bo
+    };
+}
+
+pub mod iter_direction {
+    use crate::{BWImageSize, IterOutput};
+
+    define_direction!(Horizontal, {
+        fn next(&mut self, state: crate::BWIterState) -> Option<((u32, u32), IterOutput)> {
+            let (x, y) = state.current;
+            let BWImageSize { width, height } = state.size;
+            if y >= height {
+                None
+            } else if x >= width {
+                Some(((0, y + 1), IterOutput::NewLine))
+            } else {
+                Some((
+                    (x + 8, y),
+                    IterOutput::Byte {
+                        byte: state.pixels[((y * width + x) / 8) as usize],
                         len: 8.min((width - x) as usize),
-                    })
-                }
+                    },
+                ))
             }
-            IterDirection::Vertical => {
-                if x >= width {
-                    None
-                } else if y + 8 >= height {
-                    self.current = (x + 1, 0);
-                    Some(IterOutput::NewLine)
-                } else {
-                    self.current = (x, y + 8);
+        }
+    });
+    define_direction!(Vertical, {
+        fn next(&mut self, state: crate::BWIterState) -> Option<((u32, u32), IterOutput)> {
+            let (x, y) = state.current;
+            let BWImageSize { width, height } = state.size;
+            if x >= width {
+                None
+            } else if y >= height {
+                Some(((x + 1, 0), IterOutput::NewLine))
+            } else {
+                let mut byt = 0u8;
+                let width_in_byte = ((width as f64) / 8f64).ceil() as u32;
+                let (row_byte, rev_idx_at_byte) = (x / 8, (7 - x % 8));
 
-                    let mut byt = 0u8;
-                    let from = x * width + y;
-                    let mut len = 8;
-                    for i in 0..8 {
-                        let pos = from + i * width;
-                        if pos >= self.pixels.len() as u32 {
-                            len = i as usize;
-                            break;
-                        }
-
-                        byt |= self.pixels[pos as usize] << (7 - i);
+                let from_byte = y * width_in_byte + row_byte;
+                let mut len = 8;
+                for i in 0..8 {
+                    let pos = from_byte + i * width_in_byte;
+                    if pos >= state.pixels.len() as u32 {
+                        len = i as usize;
+                        break;
                     }
 
-                    Some(IterOutput::Byte { byte: byt, len })
+                    byt |= (state.pixels[pos as usize] >> rev_idx_at_byte) << (7 - i);
                 }
+
+                Some(((x, y + len as u32), IterOutput::Byte { byte: byt, len }))
             }
+        }
+    });
+}
+
+/// Iterator for black and white image
+/// The iterator will iterate through the image in a specified direction
+/// The iterator will return the position of the pixel and the value of the pixel(8 pixels per byte)
+pub struct BWByteIter<'a, D: IterDirection> {
+    size: BWImageSize,
+    current: (u32, u32),
+    pixels: &'a [u8],
+    direction: D,
+}
+
+impl<'a, T: IterDirection> BWByteIter<'a, T> {
+    pub fn new(size: &BWImageSize, pixels: &'a [u8], direction: T) -> Self {
+        Self {
+            direction,
+            size: BWImageSize {
+                width: size.width,
+                height: size.height,
+            },
+            current: (0, 0),
+            pixels,
         }
     }
 }
@@ -271,7 +301,7 @@ impl BWImage {
         crate::file::encode_file(out, self)
     }
 
-    pub fn iterator(&self, direction: IterDirection) -> BWByteIter {
-        BWByteIter::new(direction, &self.size, &self.pixels)
+    pub fn iterator<D: IterDirection>(&self, direction: D) -> BWByteIter<D> {
+        BWByteIter::new(&self.size, &self.pixels, direction)
     }
 }
