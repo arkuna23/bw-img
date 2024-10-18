@@ -67,7 +67,7 @@ pub fn encode_file<W: std::io::Write>(output: &mut W, img: &BWImage) -> super::R
 }
 
 #[cfg(feature = "compress")]
-pub mod zip {
+pub mod compress {
     use std::io::Read;
 
     use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
@@ -84,16 +84,18 @@ pub mod zip {
         type Item = crate::Result<BWImage>;
 
         fn next(&mut self) -> Option<Self::Item> {
-            match BWImage::parse_file(&mut self.d)
-                .map_err(|e| BWError::Compression(self.count as usize, Box::new(e), self.position))
-            {
+            match BWImage::parse_file(&mut self.d) {
                 Ok(Some((img, size))) => {
                     self.count += 1;
                     self.position += size;
                     Some(Ok(img))
                 }
                 Ok(None) => None,
-                Err(e) => Some(Err(e)),
+                Err(e) => Some(Err(BWError::Compression(
+                    self.count as usize,
+                    Box::new(e),
+                    self.position,
+                ))),
             }
         }
     }
@@ -119,5 +121,155 @@ pub mod zip {
 
     pub fn decompress_imgs<R: Read>(input: R) -> DecompressIter<R> {
         DecompressIter::new(input)
+    }
+}
+
+#[cfg(feature = "video")]
+pub mod video {
+    use crate::{BWDataErr, BWImage, RgbData, VideoError};
+    use ffmpeg_next::{
+        codec::{self, packet::packet::Packet},
+        decoder,
+        format::{self, Pixel},
+        frame::Video,
+        software::scaling::{self, Flags},
+    };
+    use std::collections::LinkedList;
+
+    pub struct VideoIter {
+        pub frame_count: u64,
+        pub input_size: (u32, u32),
+        pub output_size: (u32, u32),
+        pub duration: u64,
+        pub frame_rate: u32,
+        decoder: decoder::Video,
+        scaler: scaling::Context,
+        packets: LinkedList<Packet>,
+    }
+
+    impl VideoIter {
+        /// Create a new VideoIter to process video file into bw-images
+        /// Please note that `ffmpeg_next::init` should be called before creating this
+        pub fn new(
+            path: &str,
+            width: Option<u32>,
+            height: Option<u32>,
+        ) -> Result<Self, VideoError> {
+            let mut ictx = format::input(path)?;
+            let stream = ictx
+                .streams()
+                .best(ffmpeg_next::media::Type::Video)
+                .ok_or_else(|| VideoError::Other("no video stream".into()))?;
+            let vid_index = stream.index();
+            let decoder = codec::Context::from_parameters(stream.parameters())?
+                .decoder()
+                .video()?;
+            let scaler = scaling::Context::get(
+                decoder.format(),
+                decoder.width(),
+                decoder.height(),
+                Pixel::RGB24,
+                width.unwrap_or_else(|| decoder.width()),
+                height.unwrap_or_else(|| decoder.height()),
+                Flags::BILINEAR,
+            )?;
+
+            let duration = stream.duration();
+            let time_base = stream.time_base();
+            let frame_rate = stream.avg_frame_rate();
+            if duration == 0 {
+                return Err(VideoError::Other("No frames".into()));
+            }
+
+            let secs = duration as f64 / (time_base.0 * time_base.1) as f64;
+            let frame_rate = (frame_rate.0 / frame_rate.1) as f64;
+            let frames = secs * frame_rate;
+
+            let packets = ictx
+                .packets()
+                .filter(|(stream, _)| stream.index() == vid_index)
+                .map(|(_, packet)| packet)
+                .collect();
+
+            Ok(Self {
+                frame_count: frames as u64,
+                input_size: (decoder.width(), decoder.height()),
+                output_size: (scaler.output().width, scaler.output().height),
+                decoder,
+                scaler,
+                duration: secs as u64,
+                frame_rate: frame_rate as u32,
+                packets,
+            })
+        }
+
+        pub fn convert(&mut self, packet: Packet) -> crate::Result<(Vec<BWImage>, u64)> {
+            self.decoder
+                .send_packet(&packet)
+                .map_err(VideoError::FFMPEG)?;
+
+            let mut frames = vec![];
+            let mut decoded = Video::empty();
+            let mut skipped = 0;
+            while self.decoder.receive_frame(&mut decoded).is_ok() {
+                let mut scalled = Video::empty();
+                self.scaler
+                    .run(&decoded, &mut scalled)
+                    .map_err(VideoError::FFMPEG)?;
+
+                let (width, height) = (self.scaler.output().width, self.scaler.output().height);
+                let data = scalled.data(0);
+
+                let img = match BWImage::parse(&RgbData::new(data, width, height)) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        if let BWDataErr::WrongSize(_, _, _) = e {
+                            skipped += 1;
+                            continue;
+                        } else {
+                            Err(e)?
+                        }
+                    }
+                };
+
+                frames.push(img);
+            }
+
+            Ok((frames, skipped))
+        }
+    }
+
+    impl Iterator for VideoIter {
+        type Item = crate::Result<(Vec<BWImage>, u64)>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.packets.pop_front().map(|packet| self.convert(packet))
+        }
+    }
+
+    pub fn convert_video(
+        path: &str,
+        width: Option<u32>,
+        height: Option<u32>,
+    ) -> Result<VideoIter, VideoError> {
+        VideoIter::new(path, width, height)
+    }
+
+    pub fn convert_video_to_bw_imgs(
+        path: &str,
+        width: Option<u32>,
+        height: Option<u32>,
+    ) -> crate::Result<(Vec<BWImage>, u64)> {
+        let mut skipped = 0;
+        let frames = VideoIter::new(path, width, height)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flat_map(|(f, s)| {
+                skipped += s;
+                f
+            })
+            .collect();
+
+        Ok((frames, skipped))
     }
 }

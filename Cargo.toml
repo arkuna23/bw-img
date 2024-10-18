@@ -4,11 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["compress", "img"]
+default = ["compress"]
 compress = ["flate2"]
 img = ["image"]
+video = ["ffmpeg-next"]
 
 [dependencies]
 thiserror = "*"
 flate2 = { version = "*", default-features = false, features = ["zlib-ng"], optional = true }
 image = { version = "*", optional = true }
+ffmpeg-next = { version = "*", optional = true }

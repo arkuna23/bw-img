@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use bw_img::{
-    file::zip::{compress_imgs, decompress_imgs},
+    file::compress::{compress_imgs, decompress_imgs},
     img::BWImageSize,
     BWImage, ImageData, NormalImage,
 };

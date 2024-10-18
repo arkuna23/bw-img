@@ -18,6 +18,9 @@ pub enum BWError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     BWDataErr(#[from] BWDataErr),
+    #[cfg(feature = "video")]
+    #[error(transparent)]
+    VideoErr(#[from] VideoError),
 }
 
 #[derive(Error, Debug)]
@@ -26,4 +29,13 @@ pub enum BWDataErr {
     Custom(Box<dyn Error + Send + Sync>),
     #[error("{0}x{1} is not divisible by 8, got {2} pixels")]
     WrongSize(u32, u32, usize),
+}
+
+#[cfg(feature = "video")]
+#[derive(Error, Debug)]
+pub enum VideoError {
+    #[error(transparent)]
+    FFMPEG(#[from] ffmpeg_next::Error),
+    #[error("{0}")]
+    Other(String),
 }
