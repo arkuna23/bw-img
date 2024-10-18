@@ -250,7 +250,7 @@ pub mod iter_direction {
                         break;
                     }
 
-                    byt |= (state.pixels[pos as usize] >> rev_idx_at_byte) << (7 - i);
+                    byt |= ((state.pixels[pos as usize] >> rev_idx_at_byte) & 0b1) << (7 - i);
                 }
 
                 Some(((x, y + len as u32), IterOutput::Byte { byte: byt, len }))

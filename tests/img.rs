@@ -1,5 +1,3 @@
-use std::fs;
-
 use bw_img::{iter_direction, BWByteData, BWImage, IterOutput, NormalImage};
 
 static RUST_BW: &[u8] = include_bytes!("../assets/rust.txt");
@@ -47,7 +45,6 @@ fn img_rs_vertical() {
 
     let mut rotated = String::new();
     let rows = out[0].len();
-    println!();
     for col in 0..img.size.width as usize {
         (0..rows).for_each(|row| {
             rotated.push_str(if out[row][col] { "██" } else { "  " });
@@ -55,5 +52,5 @@ fn img_rs_vertical() {
         rotated.push('\n');
     }
 
-    fs::write("/tmp/test", rotated).unwrap();
+    assert_eq!(RUST_BW, rotated.as_bytes());
 }
