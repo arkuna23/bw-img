@@ -258,6 +258,35 @@ pub mod iter_direction {
             }
         }
     });
+    define_direction!(VerticalRev, {
+        fn next(&mut self, state: crate::BWIterState) -> Option<((u32, u32), IterOutput)> {
+            let (x, y) = state.current;
+            let BWImageSize { width, height } = state.size;
+            if x >= width {
+                None
+            } else if y >= height {
+                Some(((x + 1, 0), IterOutput::NewLine))
+            } else {
+                let mut byt = 0u8;
+                let width_in_byte = ((width as f64) / 8f64).ceil() as u32;
+                let (row_byte, rev_idx_at_byte) = (x / 8, (7 - x % 8));
+
+                let from_byte = y * width_in_byte + row_byte;
+                let mut len = 8;
+                for i in 0..8 {
+                    let pos = from_byte + i * width_in_byte;
+                    if pos >= state.pixels.len() as u32 {
+                        len = i as usize;
+                        break;
+                    }
+
+                    byt |= ((state.pixels[pos as usize] >> rev_idx_at_byte) & 0b1) << i;
+                }
+
+                Some(((x, y + len as u32), IterOutput::Byte { byte: byt, len }))
+            }
+        }
+    });
 }
 
 /// Iterator for black and white image
