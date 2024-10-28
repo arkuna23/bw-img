@@ -1,3 +1,4 @@
+#[cfg(feature = "img")]
 pub use image::NormalImage;
 
 use crate::BWDataErr;
